@@ -15,6 +15,7 @@ if 'START_TIME' not in globals():
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
+CYAN = "\033[96m"
 RESET = "\033[0m"
 
 # Configuration
@@ -195,11 +196,44 @@ def restart_system():
         # Restart here as some nerdqaxeplusplus devices get unstable with bad settings
         # If not an interrupt, wait for system stabilization as some nerdqaxeplusplus devices are slow to ramp up
         if not is_interrupt:
-            print(YELLOW + "Applying new settings and waiting for system stabilization..." + RESET)
+            print(YELLOW + "Applying new settings and restarting system..." + RESET)
             response = requests.post(f"{nerdqaxeplusplus_ip}/api/system/restart", timeout=10)
             response.raise_for_status()  # Raise an exception for HTTP errors
-            time.sleep(300)  # Allow 300s, time for the system to restart and start hashing
-            print(YELLOW + "System should be stabilized now." + RESET)
+
+            # Smart stabilization: wait for system to come online and stabilize
+            print(YELLOW + "Waiting for system to restart and stabilize..." + RESET)
+            time.sleep(30)  # Initial wait for restart
+
+            # Monitor temperature stability
+            stable_readings = 0
+            required_stable_readings = 3
+            previous_temp = None
+            max_stabilization_time = 180  # Maximum 3 minutes
+            start_time = time.time()
+
+            while stable_readings < required_stable_readings:
+                if time.time() - start_time > max_stabilization_time:
+                    print(YELLOW + f"Stabilization timeout reached ({max_stabilization_time}s). Proceeding with benchmark." + RESET)
+                    break
+
+                info = get_system_info()
+                if info is not None:
+                    current_temp = info.get("temp")
+                    hash_rate = info.get("hashRate")
+
+                    if current_temp is not None and hash_rate is not None and hash_rate > 0:
+                        if previous_temp is not None:
+                            temp_change = abs(current_temp - previous_temp)
+                            if temp_change <= 2:  # Temperature stable within 2°C
+                                stable_readings += 1
+                                print(YELLOW + f"Stabilization check {stable_readings}/{required_stable_readings}: Temp={current_temp}°C, HashRate={hash_rate:.1f} GH/s" + RESET)
+                            else:
+                                stable_readings = 0  # Reset if temperature fluctuates
+                        previous_temp = current_temp
+
+                time.sleep(15)  # Check every 15 seconds
+
+            print(GREEN + "System stabilized and ready for benchmarking." + RESET)
         else:
             print(YELLOW + "Applying final settings..." + RESET)
             response = requests.post(f"{nerdqaxeplusplus_ip}/api/system/restart", timeout=10)
@@ -261,12 +295,29 @@ def benchmark_iteration(core_voltage, frequency):
         if power_consumption > max_power:
             print(RED + f"Power consumption exceeded {max_power}W! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "POWER_CONSUMPTION_EXCEEDED"
-        
+
         hash_rates.append(hash_rate)
         temperatures.append(temp)
         power_consumptions.append(power_consumption)
         if vr_temp is not None and vr_temp > 0:
             vr_temps.append(vr_temp)
+
+        # Early failure detection after collecting enough samples
+        if sample >= 4:  # After 5 samples (75 seconds)
+            recent_hashrates = hash_rates[-5:]  # Last 5 samples
+            avg_recent_hashrate = sum(recent_hashrates) / len(recent_hashrates)
+
+            # If hashrate is consistently very low (< 50% of expected), fail early
+            if avg_recent_hashrate < expected_hashrate * 0.5:
+                print(RED + f"Early failure detected: Hashrate {avg_recent_hashrate:.1f} GH/s is less than 50% of expected {expected_hashrate:.1f} GH/s" + RESET)
+                return None, None, None, False, None, "EARLY_FAILURE_LOW_HASHRATE"
+
+            # If temperature is rising too quickly, fail early
+            if len(temperatures) >= 5:
+                temp_trend = temperatures[-1] - temperatures[-5]
+                if temp_trend > 10:  # Temperature rose more than 10°C in last minute
+                    print(RED + f"Early failure detected: Temperature rising too quickly ({temp_trend}°C in 60s)" + RESET)
+                    return None, None, None, False, None, "EARLY_FAILURE_TEMP_RISING"
 
         # Calculate percentage progress
         percentage_progress = ((sample + 1) / total_samples) * 100
@@ -282,7 +333,7 @@ def benchmark_iteration(core_voltage, frequency):
         if vr_temp is not None and vr_temp > 0:
             status_line += f" | VR: {int(vr_temp):2d}°C"
         print(status_line + RESET)
-        
+
         # Only sleep if it's not the last iteration
         if sample < total_samples - 1:
             time.sleep(sample_interval)
@@ -429,6 +480,25 @@ try:
                 result["averageVRTemp"] = avg_vr_temp
 
             results.append(result)
+
+            # Display current best results after each test (incremental results display)
+            print(CYAN + "\n" + "="*70 + RESET)
+            print(CYAN + "CURRENT BEST RESULTS:" + RESET)
+
+            # Find current best hashrate
+            best_hashrate_result = max(results, key=lambda x: x["averageHashRate"])
+            print(GREEN + f"  Best Hashrate: {best_hashrate_result['averageHashRate']:.2f} GH/s" + RESET)
+            print(f"    └─ Voltage: {best_hashrate_result['coreVoltage']}mV, Frequency: {best_hashrate_result['frequency']}MHz")
+            print(f"    └─ Temp: {best_hashrate_result['averageTemperature']:.1f}°C, Efficiency: {best_hashrate_result['efficiencyJTH']:.2f} J/TH")
+
+            # Find current best efficiency
+            best_efficiency_result = min(results, key=lambda x: x["efficiencyJTH"])
+            print(GREEN + f"  Best Efficiency: {best_efficiency_result['efficiencyJTH']:.2f} J/TH" + RESET)
+            print(f"    └─ Voltage: {best_efficiency_result['coreVoltage']}mV, Frequency: {best_efficiency_result['frequency']}MHz")
+            print(f"    └─ Hashrate: {best_efficiency_result['averageHashRate']:.2f} GH/s, Temp: {best_efficiency_result['averageTemperature']:.1f}°C")
+
+            print(CYAN + f"  Total configurations tested: {len(results)}" + RESET)
+            print(CYAN + "="*70 + "\n" + RESET)
 
             if hashrate_ok:
                 # If hashrate is good, try increasing frequency

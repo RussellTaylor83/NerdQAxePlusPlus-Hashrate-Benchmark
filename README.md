@@ -4,6 +4,23 @@
 
 A Python-based benchmarking tool for optimizing NerdQAxe++ mining performance by testing different voltage and frequency combinations while monitoring hashrate, temperature, and power efficiency.
 
+## TL;DR - Quick Start
+
+**What it does:** Automatically tests different voltage/frequency combinations to find the optimal settings for your NerdQAxe++ miner.
+
+**Quick start:**
+```bash
+python3 nerdqaxeplusplus_hashrate_benchmark.py -i <MINER_IP>
+```
+
+**Time required:** 1.5-4 hours for typical scan (depends on thermal limits)
+
+**Safety:** Multi-layer protection prevents unsafe settings. Monitors temperature (68°C chip / 85°C VR), power (100W), and voltage (11.6-12.4V). Auto-stops on any limit.
+
+**Output:** JSON file with all results, ranked by hashrate and efficiency. Best settings automatically applied at end.
+
+---
+
 ## Features
 
 - Automated benchmarking of different voltage/frequency combinations
@@ -98,6 +115,7 @@ The script includes several configurable parameters (defined in the script):
 
 - **Benchmark duration:** 300 seconds (5 minutes)
 - **Sample interval:** 15 seconds
+- **Stabilization:** Smart stabilization with temperature monitoring (30-180 seconds)
 - **Maximum chip temperature:** 68°C
 - **Maximum VR temperature:** 85°C
 - **Maximum allowed voltage:** 1250mV
@@ -234,20 +252,46 @@ This tool will stress test your NerdQAxe++ by running it at various voltages and
 **Important Note:** Ambient temperature significantly affects these results. The optimal settings found may not work well if room temperature changes substantially. Re-run the benchmark if environmental conditions change.
 
 Always ensure proper cooling and monitor your device during benchmarking.
+## Benchmarking Process
+
+The tool follows this intelligent adaptive process:
+
+1. **Initialization:**
+   - Fetches current system settings and ASIC configuration
+   - Displays disclaimer and safety information
+   - Validates user-provided voltage and frequency parameters
+
+2. **Testing Loop:**
+   - Applies voltage/frequency settings and restarts system
+   - **Smart Stabilization (30-180 seconds):**
+     - Waits 30 seconds for initial restart
+     - Monitors temperature every 15 seconds
+     - Requires 3 consecutive stable readings (within 2°C)
+     - Verifies system is actively hashing
+     - Maximum wait: 180 seconds
+   - **Benchmark Period (300 seconds):**
+     - Collects samples every 15 seconds (20 total samples)
+     - Monitors temperature, power, voltage, and hashrate in real-time
+     - **Early Failure Detection:**
+       - After 75 seconds (5 samples), checks if hashrate < 50% of expected
+       - Monitors for rapid temperature rise (>10°C/min)
+       - Terminates early if configuration is clearly failing
 
 3. **Adaptive Algorithm:**
    - Calculates expected hashrate based on ASIC configuration
-   - If hashrate is within 10% of expected (stable):
+   - Tracks tested combinations to prevent duplicates
+   - **If hashrate is within 10% of expected (stable):**
      - Increases frequency by 20MHz and retests
-   - If hashrate is below 90% of expected (unstable):
-     - Decreases frequency by 20MHz
-     - Increases voltage by 10mV
-     - Retests at adjusted settings
-   - Stops when reaching thermal limits, power limits, or maximum safe values
+     - When max frequency is reached, increases voltage and resets frequency to explore higher voltage ranges
+   - **If hashrate is below 90% of expected (unstable):**
+     - Increases voltage by 10mV and retests same frequency
+     - If max voltage is reached, moves to next frequency
+   - Continues until both maximum voltage and maximum frequency are tested
+   - Stops when reaching thermal limits, power limits, or both maximums are explored
 
 4. **Data Collection:**
    - Records all successful test results
-   - Saves results after each iteration
+   - Saves results after each iteration (incremental saves)
    - Continues until limits are reached
 
 5. **Completion:**
@@ -268,6 +312,7 @@ The tool implements several data processing techniques to ensure accurate result
 - **Power averaging:** Calculates average across entire test period
 - **Efficiency calculation:** Joules per Terahash (J/TH) = Power (W) / (Hashrate (GH/s) / 1000)
 - **Zero hashrate protection:** Skips efficiency calculation if hashrate is zero
+- **Early failure detection:** Identifies failing configurations within 75 seconds
 
 ## Error Handling
 
@@ -277,6 +322,14 @@ The script includes comprehensive error handling for various failure scenarios:
 - Temperature data unavailability
 - Hashrate/power data unavailability
 - Thermal limit exceeded (chip or VR)
+- Input voltage out of range
+- Power consumption exceeded
+- Zero hashrate detection
+- Early failure detection (low hashrate or rapid temp rise)
+- Connection errors and timeouts
+- Graceful interrupt handling (Ctrl+C)
+- Duplicate test prevention
+- Multi-layer safety validation failures
 - Input voltage out of range
 - Power consumption exceeded
 - Zero hashrate detection
