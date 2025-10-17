@@ -17,49 +17,50 @@ YELLOW = "\033[93m"
 RED = "\033[91m"
 RESET = "\033[0m"
 
-# Add this before the configuration section
+# Configuration
+voltage_increment = 10
+frequency_increment = 20
+benchmark_time = 300            # 5 minutes benchmark time
+sample_interval = 15            # 15 seconds sample interval
+max_temp = 68                   # Will stop if temperature reaches or exceeds this value
+max_allowed_voltage = 1250      # Maximum allowed core voltage
+max_allowed_frequency = 800     # Maximum allowed core frequency
+max_vr_temp = 85                # Maximum allowed voltage regulator temperature
+min_input_voltage = 11600       # Minimum allowed input voltage
+max_input_voltage = 12400       # Maximum allowed input voltage
+max_power = 100                 # Max of 100W based on 120w PSU and on DC plug
+default_safe_voltage = 1150     # Predefined safe default voltage
+default_safe_frequency = 600    # Predefined safe default frequency
+
+# Run time arguments
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='Bitaxe Hashrate Benchmark Tool')
-    parser.add_argument('bitaxe_ip', nargs='?', help='IP address of the Bitaxe (e.g., 192.168.2.26)')
-    parser.add_argument('-v', '--voltage', type=int, default=1150,
-                       help='Initial voltage in mV (default: 1150)')
-    parser.add_argument('-f', '--frequency', type=int, default=500,
-                       help='Initial frequency in MHz (default: 500)')
-    
+    parser = argparse.ArgumentParser(description='NerdQAxe++ Hashrate Benchmark Tool')
+    parser.add_argument('nerdqaxeplusplus_ip', nargs='?', help='IP address of the NerdQAxe++ (e.g., 192.168.2.26)')
+    parser.add_argument('-v', '--voltage', type=int, default=default_safe_voltage,
+                       help='Initial voltage in mV (default: {default_safe_voltage})')
+    parser.add_argument('-f', '--frequency', type=int, default=default_safe_frequency,
+                       help='Initial frequency in MHz (default: {default_safe_frequency})')
+
     # If no arguments are provided, print help and exit
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
-    
+
     return parser.parse_args()
 
 # Replace the configuration section
 args = parse_arguments()
-bitaxe_ip = f"http://{args.bitaxe_ip}"
+nerdqaxeplusplus_ip = f"http://{args.nerdqaxeplusplus_ip}"
 initial_voltage = args.voltage
 initial_frequency = args.frequency
-
-# Configuration
-voltage_increment = 20
-frequency_increment = 25
-sleep_time = 90               # Wait 90 seconds before starting the benchmark
-benchmark_time = 600          # 10 minutes benchmark time
-sample_interval = 15          # 15 seconds sample interval
-max_temp = 66                 # Will stop if temperature reaches or exceeds this value
-max_allowed_voltage = 1400    # Maximum allowed core voltage
-max_allowed_frequency = 1200  # Maximum allowed core frequency
-max_vr_temp = 86              # Maximum allowed voltage regulator temperature
-min_input_voltage = 4800      # Minimum allowed input voltage
-max_input_voltage = 5500      # Maximum allowed input voltage
-max_power = 40                # Max of 40W because of DC plug
 
 # Add these variables to the global configuration section
 small_core_count = None
 asic_count = None
 
 # Add these constants to the configuration section
-min_allowed_voltage = 1000  # Minimum allowed core voltage
-min_allowed_frequency = 400  # Minimum allowed frequency
+min_allowed_voltage = 1120  # Minimum allowed core voltage
+min_allowed_frequency = 600  # Minimum allowed frequency
 
 # Validate core voltages
 if initial_voltage > max_allowed_voltage:
@@ -88,68 +89,26 @@ default_frequency = None
 
 # Check if we're handling an interrupt (Ctrl+C)
 handling_interrupt = False
-
 def fetch_default_settings():
     global default_voltage, default_frequency, small_core_count, asic_count
-    
-    # Try /api/system/info first - always get small_core_count from here
     try:
-        response = requests.get(f"{bitaxe_ip}/api/system/info", timeout=10)
+        response = requests.get(f"{nerdqaxeplusplus_ip}/api/system/info", timeout=10)
         response.raise_for_status()
         system_info = response.json()
-        
-        # Always get small_core_count from /system/info since it's always available there
-        if "smallCoreCount" not in system_info:
-            print(RED + "Error: smallCoreCount field missing from /api/system/info response." + RESET)
-            print(RED + "Cannot proceed without core count information for hashrate calculations." + RESET)
-            sys.exit(1)
-        
-        small_core_count = system_info.get("smallCoreCount")
-        
-        # Check if we have all the info we need from /system/info
-        has_voltage = "coreVoltage" in system_info
-        has_frequency = "frequency" in system_info
-        has_asic_count = "asicCount" in system_info
-        
-        if has_voltage and has_frequency and has_asic_count:
-            # We have all the info we need from /info
-            default_voltage = system_info.get("coreVoltage", 1150)
-            default_frequency = system_info.get("frequency", 500)
-            asic_count = system_info.get("asicCount", 0)
-            print(GREEN + f"Current settings determined from /api/system/info:\n"
-                          f"  Core Voltage: {default_voltage}mV\n"
-                          f"  Frequency: {default_frequency}MHz\n"
-                          f"  ASIC Configuration: {small_core_count * asic_count} total cores" + RESET)
-            return
-        else:
-            print(YELLOW + f"Got small_core_count ({small_core_count}) from /api/system/info, getting remaining info from /api/system/asic..." + RESET)
-    except requests.exceptions.RequestException as e:
-        print(RED + f"Error fetching from /api/system/info: {e}" + RESET)
-        sys.exit(1)
-    
-    # Try /api/system/asic for updated devices
-    try:
-        response = requests.get(f"{bitaxe_ip}/api/system/asic", timeout=10)
-        response.raise_for_status()
-        asic_info = response.json()
-        
-        default_voltage = asic_info.get("defaultVoltage", 1150)
-        default_frequency = asic_info.get("defaultFrequency", 500)
-        # Keep the small_core_count we got from /system/info (don't override it)
-        asic_count = asic_info.get("asicCount", 1)
-        
-        print(GREEN + f"Current settings determined from /api/system/asic:\n"
+        default_voltage = system_info.get("coreVoltage", default_safe_voltage)  # Fallback to safe value if not found
+        default_frequency = system_info.get("frequency", default_safe_frequency)  # Fallback to safe value if not found
+        small_core_count = system_info.get("smallCoreCount", 0)
+        asic_count = system_info.get("asicCount", 0)
+        print(GREEN + f"Current settings determined:\n"
                       f"  Core Voltage: {default_voltage}mV\n"
                       f"  Frequency: {default_frequency}MHz\n"
                       f"  ASIC Configuration: {small_core_count * asic_count} total cores" + RESET)
-        return
     except requests.exceptions.RequestException as e:
-        print(RED + f"Error fetching from /api/asic: {e}" + RESET)
-    
-    # If both endpoints fail, exit the program
-    print(RED + "Failed to fetch rest of the device information from /api/system/asic." + RESET)
-    print(RED + "Cannot proceed safely without device configuration. Please check your connection and try again." + RESET)
-    sys.exit(1)
+        print(RED + f"Error fetching default system settings: {e}. Using fallback defaults." + RESET)
+        default_voltage = default_safe_voltage
+        default_frequency = default_safe_frequency
+        small_core_count = 0
+        asic_count = 0
 
 # Add a global flag to track whether the system has already been reset
 system_reset_done = False
@@ -184,7 +143,7 @@ def get_system_info():
     retries = 3
     for attempt in range(retries):
         try:
-            response = requests.get(f"{bitaxe_ip}/api/system/info", timeout=10)
+            response = requests.get(f"{nerdqaxeplusplus_ip}/api/system/info", timeout=10)
             response.raise_for_status()  # Raise an exception for HTTP errors
             return response.json()
         except requests.exceptions.Timeout:
@@ -203,7 +162,7 @@ def set_system_settings(core_voltage, frequency):
         "frequency": frequency
     }
     try:
-        response = requests.patch(f"{bitaxe_ip}/api/system", json=settings, timeout=10)
+        response = requests.patch(f"{nerdqaxeplusplus_ip}/api/system", json=settings, timeout=10)
         response.raise_for_status()  # Raise an exception for HTTP errors
         print(YELLOW + f"Applying settings: Voltage = {core_voltage}mV, Frequency = {frequency}MHz" + RESET)
         time.sleep(2)
@@ -215,17 +174,18 @@ def restart_system():
     try:
         # Check if we're being called from handle_sigint
         is_interrupt = handling_interrupt
-        
-        # Restart here as some bitaxes get unstable with bad settings
-        # If not an interrupt, wait sleep_time for system stabilization as some bitaxes are slow to ramp up
+
+        # Restart here as some nerdqaxeplusplus devices get unstable with bad settings
+        # If not an interrupt, wait for system stabilization as some nerdqaxeplusplus devices are slow to ramp up
         if not is_interrupt:
-            print(YELLOW + f"Applying new settings and waiting {sleep_time}s for system stabilization..." + RESET)
-            response = requests.post(f"{bitaxe_ip}/api/system/restart", timeout=10)
+            print(YELLOW + "Applying new settings and waiting for system stabilization..." + RESET)
+            response = requests.post(f"{nerdqaxeplusplus_ip}/api/system/restart", timeout=10)
             response.raise_for_status()  # Raise an exception for HTTP errors
-            time.sleep(sleep_time)  # Allow sleep_time for the system to restart and start hashing
+            time.sleep(300)  # Allow 300s, time for the system to restart and start hashing
+            print(YELLOW + "System should be stabilized now." + RESET)
         else:
             print(YELLOW + "Applying final settings..." + RESET)
-            response = requests.post(f"{bitaxe_ip}/api/system/restart", timeout=10)
+            response = requests.post(f"{nerdqaxeplusplus_ip}/api/system/restart", timeout=10)
             response.raise_for_status()  # Raise an exception for HTTP errors
     except requests.exceptions.RequestException as e:
         print(RED + f"Error restarting the system: {e}" + RESET)
@@ -259,19 +219,19 @@ def benchmark_iteration(core_voltage, frequency):
         
         # Check both chip and VR temperatures
         if temp >= max_temp:
-            print(RED + f"Chip temperature exceeded {max_temp}°C! Stopping current benchmark." + RESET)
+            print(RED + f"Chip temperature of {temp}°C exceeded {max_temp}°C! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "CHIP_TEMP_EXCEEDED"
             
         if vr_temp is not None and vr_temp >= max_vr_temp:
-            print(RED + f"Voltage regulator temperature exceeded {max_vr_temp}°C! Stopping current benchmark." + RESET)
+            print(RED + f"Voltage regulator temperature of {vr_temp}°C exceeded {max_vr_temp}°C! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "VR_TEMP_EXCEEDED"
 
         if voltage < min_input_voltage:
-            print(RED + f"Input voltage is below the minimum allowed value of {min_input_voltage}mV! Stopping current benchmark." + RESET)
+            print(RED + f"Input voltage of {voltage}mV is below the minimum allowed value of {min_input_voltage}mV! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "INPUT_VOLTAGE_BELOW_MIN"
         
         if voltage > max_input_voltage:
-            print(RED + f"Input voltage is above the maximum allowed value of {max_input_voltage}mV! Stopping current benchmark." + RESET)
+            print(RED + f"Input voltage of {voltage}mV is above the maximum allowed value of {max_input_voltage}mV! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "INPUT_VOLTAGE_ABOVE_MAX"
         
         hash_rate = info.get("hashRate")
@@ -337,8 +297,8 @@ def benchmark_iteration(core_voltage, frequency):
             print(RED + "Warning: Zero hashrate detected, skipping efficiency calculation" + RESET)
             return None, None, None, False, None, "ZERO_HASHRATE"
         
-        # Calculate if hashrate is within 6% of expected
-        hashrate_within_tolerance = (average_hashrate >= expected_hashrate * 0.94)
+        # Calculate if hashrate is within 10% of expected
+        hashrate_within_tolerance = (average_hashrate >= expected_hashrate * 0.90)
         
         print(GREEN + f"Average Hashrate: {average_hashrate:.2f} GH/s (Expected: {expected_hashrate:.2f} GH/s)" + RESET)
         print(GREEN + f"Average Temperature: {average_temperature:.2f}°C" + RESET)
@@ -353,14 +313,14 @@ def benchmark_iteration(core_voltage, frequency):
 
 def save_results():
     try:
-        # Extract IP from bitaxe_ip global variable and remove 'http://'
-        ip_address = bitaxe_ip.replace('http://', '')
-        filename = f"bitaxe_benchmark_results_{ip_address}_{START_TIME}.json"
+        # Extract IP from nerdqaxeplusplus_ip global variable and remove 'http://'
+        ip_address = nerdqaxeplusplus_ip.replace('http://', '')
+        filename = f"nerdqaxeplusplus_benchmark_results_{ip_address}_{START_TIME}.json"
         with open(filename, "w") as f:
             json.dump(results, f, indent=4)
         print(GREEN + f"Results saved to {filename}" + RESET)
         print()  # Add empty line
-        
+
     except IOError as e:
         print(RED + f"Error saving results to file: {e}" + RESET)
 
@@ -385,8 +345,9 @@ try:
     fetch_default_settings()
     
     # Add disclaimer
+    # Add disclaimer
     print(RED + "\nDISCLAIMER:" + RESET)
-    print("This tool will stress test your Bitaxe by running it at various voltages and frequencies.")
+    print("This tool will stress test your NerdQAxe++ by running it at various voltages and frequencies.")
     print("While safeguards are in place, running hardware outside of standard parameters carries inherent risks.")
     print("Use this tool at your own risk. The author(s) are not responsible for any damage to your hardware.")
     print("\nNOTE: Ambient temperature significantly affects these results. The optimal settings found may not")
@@ -492,8 +453,8 @@ finally:
         }
         
         # Save the final data to JSON
-        ip_address = bitaxe_ip.replace('http://', '')
-        filename = f"bitaxe_benchmark_results_{ip_address}_{START_TIME}.json"
+        ip_address = nerdqaxeplusplus_ip.replace('http://', '')
+        filename = f"nerdqaxeplusplus_benchmark_results_{ip_address}_{START_TIME}.json"
         with open(filename, "w") as f:
             json.dump(final_data, f, indent=4)
         
