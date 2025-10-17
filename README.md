@@ -117,7 +117,7 @@ These values can be modified directly in the script if needed for your specific 
 
 ## Output
 
-The benchmark results are saved to `bitaxe_benchmark_results_<ip_address>_<timestamp>.json`, containing:
+The benchmark results are saved to `nerdqaxeplusplus_benchmark_results_<ip_address>_<timestamp>.json`, containing:
 
 ### File Structure:
 - **all_results:** Complete test results for all combinations tested
@@ -167,6 +167,73 @@ The tool follows this intelligent adaptive process:
    - Waits 300 seconds for system stabilization
    - Collects samples every 15 seconds during 5-minute benchmark period
    - Monitors temperature, power, voltage, and hashrate in real-time
+
+3. **Adaptive Algorithm:**
+   - Calculates expected hashrate based on ASIC configuration
+   - If hashrate is within 10% of expected (stable):
+     - Increases frequency by 20MHz and retests
+     - When max frequency is reached, increases voltage and resets frequency to explore higher voltage ranges
+   - If hashrate is below 90% of expected (unstable):
+     - Increases voltage by 10mV and retests same frequency
+     - If max voltage is reached, moves to next frequency
+   - Continues until both maximum voltage and maximum frequency are tested
+   - Stops when reaching thermal limits, power limits, or both maximums are explored
+
+4. **Data Collection:**
+   - Records all successful test results
+   - Saves results after each iteration
+   - Continues until limits are reached
+
+5. **Completion:**
+   - Ranks all configurations by hashrate and efficiency
+   - Automatically applies the best performing settings
+   - Saves comprehensive results with top performers highlighted
+   - Restarts system with optimal configuration
+
+## Data Processing
+
+The tool implements several data processing techniques to ensure accurate results:
+
+- **Hashrate outlier removal:** Removes 3 highest and 3 lowest readings
+- **Temperature warmup exclusion:** Excludes first 6 temperature readings
+- **VR temperature processing:** Excludes first 6 readings when available
+- **Expected hashrate calculation:** Based on frequency × (small_core_count × asic_count) / 1000
+- **Hashrate validation:** Ensures performance is within 10% of theoretical maximum
+- **Power averaging:** Calculates average across entire test period
+- **Efficiency calculation:** Joules per Terahash (J/TH) = Power (W) / (Hashrate (GH/s) / 1000)
+- **Zero hashrate protection:** Skips efficiency calculation if hashrate is zero
+
+## Error Handling
+
+The script includes comprehensive error handling for various failure scenarios:
+
+- System info fetch failures with retry logic (3 attempts)
+- Temperature data unavailability
+- Hashrate/power data unavailability
+- Thermal limit exceeded (chip or VR)
+- Input voltage out of range
+- Power consumption exceeded
+- Zero hashrate detection
+- Connection errors and timeouts
+- Graceful interrupt handling (Ctrl+C)
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+
+## Disclaimer
+
+**USE AT YOUR OWN RISK**
+
+This tool will stress test your NerdQAxe++ by running it at various voltages and frequencies. While safeguards are in place, running hardware outside of standard parameters carries inherent risks. The author(s) are not responsible for any damage to your hardware.
+
+**Important Note:** Ambient temperature significantly affects these results. The optimal settings found may not work well if room temperature changes substantially. Re-run the benchmark if environmental conditions change.
+
+Always ensure proper cooling and monitor your device during benchmarking.
 
 3. **Adaptive Algorithm:**
    - Calculates expected hashrate based on ASIC configuration

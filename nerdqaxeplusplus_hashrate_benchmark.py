@@ -157,6 +157,23 @@ def get_system_info():
     return None
 
 def set_system_settings(core_voltage, frequency):
+    # Safety validation before applying settings
+    if core_voltage < min_allowed_voltage:
+        print(RED + f"SAFETY ERROR: Attempted to set voltage {core_voltage}mV below minimum {min_allowed_voltage}mV. Aborting." + RESET)
+        raise ValueError(f"Voltage {core_voltage}mV is below minimum allowed {min_allowed_voltage}mV")
+
+    if core_voltage > max_allowed_voltage:
+        print(RED + f"SAFETY ERROR: Attempted to set voltage {core_voltage}mV above maximum {max_allowed_voltage}mV. Aborting." + RESET)
+        raise ValueError(f"Voltage {core_voltage}mV exceeds maximum allowed {max_allowed_voltage}mV")
+
+    if frequency < min_allowed_frequency:
+        print(RED + f"SAFETY ERROR: Attempted to set frequency {frequency}MHz below minimum {min_allowed_frequency}MHz. Aborting." + RESET)
+        raise ValueError(f"Frequency {frequency}MHz is below minimum allowed {min_allowed_frequency}MHz")
+
+    if frequency > max_allowed_frequency:
+        print(RED + f"SAFETY ERROR: Attempted to set frequency {frequency}MHz above maximum {max_allowed_frequency}MHz. Aborting." + RESET)
+        raise ValueError(f"Frequency {frequency}MHz exceeds maximum allowed {max_allowed_frequency}MHz")
+
     settings = {
         "coreVoltage": core_voltage,
         "frequency": frequency
@@ -355,11 +372,49 @@ try:
     
     current_voltage = initial_voltage
     current_frequency = initial_frequency
-    
-    while current_voltage <= max_allowed_voltage and current_frequency <= max_allowed_frequency:
+
+    # Track if we've reached maximums
+    max_voltage_reached = False
+    max_frequency_reached = False
+
+    # Track tested combinations to avoid duplicates
+    tested_combinations = set()
+
+    while not (max_voltage_reached and max_frequency_reached):
+        # Create a unique key for this combination
+        combination_key = (current_voltage, current_frequency)
+
+        # Skip if we've already tested this combination
+        if combination_key in tested_combinations:
+            print(YELLOW + f"Skipping already tested combination: Voltage={current_voltage}mV, Frequency={current_frequency}MHz" + RESET)
+            # Move to next combination
+            if current_frequency + frequency_increment <= max_allowed_frequency:
+                current_frequency += frequency_increment
+            elif current_voltage + voltage_increment <= max_allowed_voltage:
+                current_voltage += voltage_increment
+                current_frequency = initial_frequency
+            else:
+                # Both at max, we're done
+                max_voltage_reached = True
+                max_frequency_reached = True
+                break
+            continue
+
+        # Mark this combination as tested
+        tested_combinations.add(combination_key)
+
+        # Validate values before applying (belt and suspenders approach)
+        if current_voltage > max_allowed_voltage or current_frequency > max_allowed_frequency:
+            print(RED + f"SAFETY CHECK: Attempted to test unsafe values (V={current_voltage}mV, F={current_frequency}MHz). Stopping." + RESET)
+            break
+
+        if current_voltage < min_allowed_voltage or current_frequency < min_allowed_frequency:
+            print(RED + f"SAFETY CHECK: Values below minimum (V={current_voltage}mV, F={current_frequency}MHz). Stopping." + RESET)
+            break
+
         set_system_settings(current_voltage, current_frequency)
         avg_hashrate, avg_temp, efficiency_jth, hashrate_ok, avg_vr_temp, error_reason = benchmark_iteration(current_voltage, current_frequency)
-        
+
         if avg_hashrate is not None and avg_temp is not None and efficiency_jth is not None:
             result = {
                 "coreVoltage": current_voltage,
@@ -368,11 +423,11 @@ try:
                 "averageTemperature": avg_temp,
                 "efficiencyJTH": efficiency_jth
             }
-            
+
             # Only add VR temp if it exists
             if avg_vr_temp is not None:
                 result["averageVRTemp"] = avg_vr_temp
-                
+
             results.append(result)
 
             if hashrate_ok:
@@ -380,18 +435,34 @@ try:
                 if current_frequency + frequency_increment <= max_allowed_frequency:
                     current_frequency += frequency_increment
                 else:
-                    break  # We've reached max frequency with good results
+                    max_frequency_reached = True
+                    # If we've reached max frequency, try increasing voltage if not at max
+                    if current_voltage + voltage_increment <= max_allowed_voltage:
+                        current_voltage += voltage_increment
+                        # Reset frequency to initial to explore higher voltage with all frequencies
+                        current_frequency = initial_frequency
+                        max_frequency_reached = False  # Reset since we're exploring new voltage
+                        print(YELLOW + f"Max frequency reached. Increasing voltage to {current_voltage}mV and resetting frequency to {current_frequency}MHz" + RESET)
+                    else:
+                        max_voltage_reached = True
+                        print(GREEN + f"Reached maximum voltage ({max_allowed_voltage}mV) and frequency ({max_allowed_frequency}MHz) with good results." + RESET)
             else:
-                # If hashrate is not good, go back one frequency step and increase voltage
+                # If hashrate is not good, increase voltage and retry same frequency
                 if current_voltage + voltage_increment <= max_allowed_voltage:
                     current_voltage += voltage_increment
-                    current_frequency -= frequency_increment  # Go back to one frequency step and retry
-                    print(YELLOW + f"Hashrate to low compared to expected. Decreasing frequency to {current_frequency}MHz and increasing voltage to {current_voltage}mV" + RESET)
+                    print(YELLOW + f"Hashrate too low compared to expected. Increasing voltage to {current_voltage}mV and retrying frequency {current_frequency}MHz" + RESET)
                 else:
-                    break  # We've reached max voltage without good results
+                    max_voltage_reached = True
+                    # If we can't increase voltage, try next frequency if available
+                    if current_frequency + frequency_increment <= max_allowed_frequency:
+                        current_frequency += frequency_increment
+                        print(YELLOW + f"Max voltage reached. Moving to next frequency: {current_frequency}MHz" + RESET)
+                    else:
+                        max_frequency_reached = True
+                        print(YELLOW + f"Reached maximum voltage ({max_allowed_voltage}mV) and frequency ({max_allowed_frequency}MHz) but hashrate is below expected." + RESET)
         else:
             # If we hit thermal limits or other issues, we've found the highest safe settings
-            print(GREEN + "Reached thermal or stability limits. Stopping further testing." + RESET)
+            print(GREEN + f"Reached thermal or stability limits at V={current_voltage}mV, F={current_frequency}MHz. Stopping further testing." + RESET)
             break  # Stop testing higher values
 
         save_results()
