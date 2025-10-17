@@ -128,7 +128,7 @@ def handle_sigint(signum, frame):
         if results:
             reset_to_best_setting()
             save_results()
-            print(GREEN + "Bitaxe reset to best or default settings and results saved." + RESET)
+            print(GREEN + "NerdQAxe++ reset to best or default settings and results saved." + RESET)
         else:
             print(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
             set_system_settings(default_voltage, default_frequency)
@@ -551,7 +551,7 @@ finally:
         if results:
             reset_to_best_setting()
             save_results()
-            print(GREEN + "Bitaxe reset to best or default settings and results saved." + RESET)
+            print(GREEN + "NerdQAxe++ reset to best or default settings and results saved." + RESET)
         else:
             print(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
             set_system_settings(default_voltage, default_frequency)
@@ -635,7 +635,7 @@ def cleanup_and_exit(reason=None):
         if results:
             reset_to_best_setting()
             save_results()
-            print(GREEN + "Bitaxe reset to best settings and results saved." + RESET)
+            print(GREEN + "NerdQAxe++ reset to best settings and results saved." + RESET)
         else:
             print(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
             set_system_settings(default_voltage, default_frequency)
