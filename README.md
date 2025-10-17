@@ -37,7 +37,7 @@ This tool will stress test your NerdQAxe++ hardware by running it at various vol
 
 **Quick start:**
 ```bash
-python3 nerdqaxeplusplus_hashrate_benchmark.py -i <MINER_IP> -sv 1150 -sf 600 -mv 1250 -mf 800
+python3 nerdqaxeplusplus_hashrate_benchmark.py -i <MINER_IP>
 ```
 
 **Time required:** 1.5-4 hours for typical scan (depends on thermal limits)
