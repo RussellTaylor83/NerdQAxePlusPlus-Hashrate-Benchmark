@@ -5,11 +5,11 @@ import signal
 import sys
 import argparse
 from datetime import datetime
-START_TIME = datetime.now().strftime("%Y-%m-%d_%H")
+START_TIME = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
 if 'START_TIME' not in globals():
-    START_TIME = datetime.now().strftime("%Y-%m-%d_%H")
+    START_TIME = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 # ANSI Color Codes
 GREEN = "\033[92m"
@@ -17,6 +17,10 @@ YELLOW = "\033[93m"
 RED = "\033[91m"
 CYAN = "\033[96m"
 RESET = "\033[0m"
+
+def log(message=""):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
 
 # Configuration
 voltage_increment = 10
@@ -100,12 +104,12 @@ def fetch_default_settings():
         default_frequency = system_info.get("frequency", default_safe_frequency)  # Fallback to safe value if not found
         small_core_count = system_info.get("smallCoreCount", 0)
         asic_count = system_info.get("asicCount", 0)
-        print(GREEN + f"Current settings determined:\n"
+        log(GREEN + f"Current settings determined:\n"
                       f"  Core Voltage: {default_voltage}mV\n"
                       f"  Frequency: {default_frequency}MHz\n"
                       f"  ASIC Configuration: {small_core_count * asic_count} total cores" + RESET)
     except requests.exceptions.RequestException as e:
-        print(RED + f"Error fetching default system settings: {e}. Using fallback defaults." + RESET)
+        log(RED + f"Error fetching default system settings: {e}. Using fallback defaults." + RESET)
         default_voltage = default_safe_voltage
         default_frequency = default_safe_frequency
         small_core_count = 0
@@ -122,15 +126,15 @@ def handle_sigint(signum, frame):
         return
         
     handling_interrupt = True
-    print(RED + "Benchmarking interrupted by user." + RESET)
+    log(RED + "Benchmarking interrupted by user." + RESET)
     
     try:
         if results:
             reset_to_best_setting()
             save_results()
-            print(GREEN + "NerdQAxe++ reset to best or default settings and results saved." + RESET)
+            log(GREEN + "NerdQAxe++ reset to best or default settings and results saved." + RESET)
         else:
-            print(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
+            log(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
             set_system_settings(default_voltage, default_frequency)
     finally:
         system_reset_done = True
@@ -148,47 +152,55 @@ def get_system_info():
             response.raise_for_status()  # Raise an exception for HTTP errors
             return response.json()
         except requests.exceptions.Timeout:
-            print(YELLOW + f"Timeout while fetching system info. Attempt {attempt + 1} of {retries}." + RESET)
+            log(YELLOW + f"Timeout while fetching system info. Attempt {attempt + 1} of {retries}." + RESET)
         except requests.exceptions.ConnectionError:
-            print(RED + f"Connection error while fetching system info. Attempt {attempt + 1} of {retries}." + RESET)
+            log(RED + f"Connection error while fetching system info. Attempt {attempt + 1} of {retries}." + RESET)
         except requests.exceptions.RequestException as e:
-            print(RED + f"Error fetching system info: {e}" + RESET)
+            log(RED + f"Error fetching system info: {e}" + RESET)
             break
         time.sleep(5)  # Wait before retrying
     return None
 
-def set_system_settings(core_voltage, frequency):
+def set_system_settings(core_voltage, frequency, retries=3):
     # Safety validation before applying settings
     if core_voltage < min_allowed_voltage:
-        print(RED + f"SAFETY ERROR: Attempted to set voltage {core_voltage}mV below minimum {min_allowed_voltage}mV. Aborting." + RESET)
+        log(RED + f"SAFETY ERROR: Attempted to set voltage {core_voltage}mV below minimum {min_allowed_voltage}mV. Aborting." + RESET)
         raise ValueError(f"Voltage {core_voltage}mV is below minimum allowed {min_allowed_voltage}mV")
 
     if core_voltage > max_allowed_voltage:
-        print(RED + f"SAFETY ERROR: Attempted to set voltage {core_voltage}mV above maximum {max_allowed_voltage}mV. Aborting." + RESET)
+        log(RED + f"SAFETY ERROR: Attempted to set voltage {core_voltage}mV above maximum {max_allowed_voltage}mV. Aborting." + RESET)
         raise ValueError(f"Voltage {core_voltage}mV exceeds maximum allowed {max_allowed_voltage}mV")
 
     if frequency < min_allowed_frequency:
-        print(RED + f"SAFETY ERROR: Attempted to set frequency {frequency}MHz below minimum {min_allowed_frequency}MHz. Aborting." + RESET)
+        log(RED + f"SAFETY ERROR: Attempted to set frequency {frequency}MHz below minimum {min_allowed_frequency}MHz. Aborting." + RESET)
         raise ValueError(f"Frequency {frequency}MHz is below minimum allowed {min_allowed_frequency}MHz")
 
     if frequency > max_allowed_frequency:
-        print(RED + f"SAFETY ERROR: Attempted to set frequency {frequency}MHz above maximum {max_allowed_frequency}MHz. Aborting." + RESET)
+        log(RED + f"SAFETY ERROR: Attempted to set frequency {frequency}MHz above maximum {max_allowed_frequency}MHz. Aborting." + RESET)
         raise ValueError(f"Frequency {frequency}MHz exceeds maximum allowed {max_allowed_frequency}MHz")
 
     settings = {
         "coreVoltage": core_voltage,
         "frequency": frequency
     }
-    try:
-        response = requests.patch(f"{nerdqaxeplusplus_ip}/api/system", json=settings, timeout=10)
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        print(YELLOW + f"Applying settings: Voltage = {core_voltage}mV, Frequency = {frequency}MHz" + RESET)
-        time.sleep(2)
-        restart_system()
-    except requests.exceptions.RequestException as e:
-        print(RED + f"Error setting system settings: {e}" + RESET)
+    
+    for attempt in range(retries):
+        try:
+            response = requests.patch(f"{nerdqaxeplusplus_ip}/api/system", json=settings, timeout=10)
+            response.raise_for_status()  # Raise an exception for HTTP errors
+            log(YELLOW + f"Applying settings: Voltage = {core_voltage}mV, Frequency = {frequency}MHz" + RESET)
+            time.sleep(2)
+            restart_system()
+            return # Success
+        except requests.exceptions.RequestException as e:
+            log(RED + f"Error setting system settings (Attempt {attempt + 1}/{retries}): {e}" + RESET)
+            if attempt < retries - 1:
+                log(YELLOW + "Retrying in 5 seconds..." + RESET)
+                time.sleep(5)
+            else:
+                log(RED + "Failed to set system settings after all retries." + RESET)
 
-def restart_system():
+def restart_system(retries=3):
     try:
         # Check if we're being called from handle_sigint
         is_interrupt = handling_interrupt
@@ -196,12 +208,27 @@ def restart_system():
         # Restart here as some nerdqaxeplusplus devices get unstable with bad settings
         # If not an interrupt, wait for system stabilization as some nerdqaxeplusplus devices are slow to ramp up
         if not is_interrupt:
-            print(YELLOW + "Applying new settings and restarting system..." + RESET)
-            response = requests.post(f"{nerdqaxeplusplus_ip}/api/system/restart", timeout=10)
-            response.raise_for_status()  # Raise an exception for HTTP errors
+            log(YELLOW + "Applying new settings and restarting system..." + RESET)
+            
+            # Retry loop for the restart command
+            restart_success = False
+            for attempt in range(retries):
+                try:
+                    response = requests.post(f"{nerdqaxeplusplus_ip}/api/system/restart", timeout=10)
+                    response.raise_for_status()
+                    restart_success = True
+                    break
+                except requests.exceptions.RequestException as e:
+                    log(RED + f"Error sending restart command (Attempt {attempt + 1}/{retries}): {e}" + RESET)
+                    if attempt < retries - 1:
+                        time.sleep(5)
+            
+            if not restart_success:
+                log(RED + "Failed to restart system after all retries." + RESET)
+                return
 
             # Smart stabilization: wait for system to come online and stabilize
-            print(YELLOW + "Waiting for system to restart and stabilize..." + RESET)
+            log(YELLOW + "Waiting for system to restart and stabilize..." + RESET)
             time.sleep(30)  # Initial wait for restart
 
             # Monitor temperature stability
@@ -213,7 +240,7 @@ def restart_system():
 
             while stable_readings < required_stable_readings:
                 if time.time() - start_time > max_stabilization_time:
-                    print(YELLOW + f"Stabilization timeout reached ({max_stabilization_time}s). Proceeding with benchmark." + RESET)
+                    log(YELLOW + f"Stabilization timeout reached ({max_stabilization_time}s). Proceeding with benchmark." + RESET)
                     break
 
                 info = get_system_info()
@@ -226,24 +253,33 @@ def restart_system():
                             temp_change = abs(current_temp - previous_temp)
                             if temp_change <= 2:  # Temperature stable within 2°C
                                 stable_readings += 1
-                                print(YELLOW + f"Stabilization check {stable_readings}/{required_stable_readings}: Temp={current_temp}°C, HashRate={hash_rate:.1f} GH/s" + RESET)
+                                log(YELLOW + f"Stabilization check {stable_readings}/{required_stable_readings}: Temp={current_temp}°C, HashRate={hash_rate:.1f} GH/s" + RESET)
                             else:
                                 stable_readings = 0  # Reset if temperature fluctuates
                         previous_temp = current_temp
 
                 time.sleep(15)  # Check every 15 seconds
 
-            print(GREEN + "System stabilized and ready for benchmarking." + RESET)
+            log(GREEN + "System stabilized and ready for benchmarking." + RESET)
         else:
-            print(YELLOW + "Applying final settings..." + RESET)
-            response = requests.post(f"{nerdqaxeplusplus_ip}/api/system/restart", timeout=10)
-            response.raise_for_status()  # Raise an exception for HTTP errors
+            log(YELLOW + "Applying final settings..." + RESET)
+            # Retry loop for the final restart
+            for attempt in range(retries):
+                try:
+                    response = requests.post(f"{nerdqaxeplusplus_ip}/api/system/restart", timeout=10)
+                    response.raise_for_status()
+                    break
+                except requests.exceptions.RequestException as e:
+                    log(RED + f"Error sending restart command (Attempt {attempt + 1}/{retries}): {e}" + RESET)
+                    if attempt < retries - 1:
+                        time.sleep(5)
+
     except requests.exceptions.RequestException as e:
-        print(RED + f"Error restarting the system: {e}" + RESET)
+        log(RED + f"Error restarting the system: {e}" + RESET)
 
 def benchmark_iteration(core_voltage, frequency):
     current_time = time.strftime("%H:%M:%S")
-    print(GREEN + f"[{current_time}] Starting benchmark for Core Voltage: {core_voltage}mV, Frequency: {frequency}MHz" + RESET)
+    log(GREEN + f"[{current_time}] Starting benchmark for Core Voltage: {core_voltage}mV, Frequency: {frequency}MHz" + RESET)
     hash_rates = []
     temperatures = []
     power_consumptions = []
@@ -254,46 +290,46 @@ def benchmark_iteration(core_voltage, frequency):
     for sample in range(total_samples):
         info = get_system_info()
         if info is None:
-            print(YELLOW + "Skipping this iteration due to failure in fetching system info." + RESET)
+            log(YELLOW + "Skipping this iteration due to failure in fetching system info." + RESET)
             return None, None, None, False, None, "SYSTEM_INFO_FAILURE"
         
         temp = info.get("temp")
         vr_temp = info.get("vrTemp")  # Get VR temperature if available
         voltage = info.get("voltage")
         if temp is None:
-            print(YELLOW + "Temperature data not available." + RESET)
+            log(YELLOW + "Temperature data not available." + RESET)
             return None, None, None, False, None, "TEMPERATURE_DATA_FAILURE"
         
         if temp < 5:
-            print(YELLOW + "Temperature is below 5°C. This is unexpected. Please check the system." + RESET)
+            log(YELLOW + "Temperature is below 5°C. This is unexpected. Please check the system." + RESET)
             return None, None, None, False, None, "TEMPERATURE_BELOW_5"
         
         # Check both chip and VR temperatures
         if temp >= max_temp:
-            print(RED + f"Chip temperature of {temp}°C exceeded {max_temp}°C! Stopping current benchmark." + RESET)
+            log(RED + f"Chip temperature of {temp}°C exceeded {max_temp}°C! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "CHIP_TEMP_EXCEEDED"
             
         if vr_temp is not None and vr_temp >= max_vr_temp:
-            print(RED + f"Voltage regulator temperature of {vr_temp}°C exceeded {max_vr_temp}°C! Stopping current benchmark." + RESET)
+            log(RED + f"Voltage regulator temperature of {vr_temp}°C exceeded {max_vr_temp}°C! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "VR_TEMP_EXCEEDED"
 
         if voltage < min_input_voltage:
-            print(RED + f"Input voltage of {voltage}mV is below the minimum allowed value of {min_input_voltage}mV! Stopping current benchmark." + RESET)
+            log(RED + f"Input voltage of {voltage}mV is below the minimum allowed value of {min_input_voltage}mV! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "INPUT_VOLTAGE_BELOW_MIN"
         
         if voltage > max_input_voltage:
-            print(RED + f"Input voltage of {voltage}mV is above the maximum allowed value of {max_input_voltage}mV! Stopping current benchmark." + RESET)
+            log(RED + f"Input voltage of {voltage}mV is above the maximum allowed value of {max_input_voltage}mV! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "INPUT_VOLTAGE_ABOVE_MAX"
         
         hash_rate = info.get("hashRate")
         power_consumption = info.get("power")
         
         if hash_rate is None or power_consumption is None:
-            print(YELLOW + "Hashrate or Watts data not available." + RESET)
+            log(YELLOW + "Hashrate or Watts data not available." + RESET)
             return None, None, None, False, None, "HASHRATE_POWER_DATA_FAILURE"
         
         if power_consumption > max_power:
-            print(RED + f"Power consumption exceeded {max_power}W! Stopping current benchmark." + RESET)
+            log(RED + f"Power consumption exceeded {max_power}W! Stopping current benchmark." + RESET)
             return None, None, None, False, None, "POWER_CONSUMPTION_EXCEEDED"
 
         hash_rates.append(hash_rate)
@@ -309,14 +345,14 @@ def benchmark_iteration(core_voltage, frequency):
 
             # If hashrate is consistently very low (< 50% of expected), fail early
             if avg_recent_hashrate < expected_hashrate * 0.5:
-                print(RED + f"Early failure detected: Hashrate {avg_recent_hashrate:.1f} GH/s is less than 50% of expected {expected_hashrate:.1f} GH/s" + RESET)
+                log(RED + f"Early failure detected: Hashrate {avg_recent_hashrate:.1f} GH/s is less than 50% of expected {expected_hashrate:.1f} GH/s" + RESET)
                 return None, None, None, False, None, "EARLY_FAILURE_LOW_HASHRATE"
 
             # If temperature is rising too quickly, fail early
             if len(temperatures) >= 5:
                 temp_trend = temperatures[-1] - temperatures[-5]
                 if temp_trend > 10:  # Temperature rose more than 10°C in last minute
-                    print(RED + f"Early failure detected: Temperature rising too quickly ({temp_trend}°C in 60s)" + RESET)
+                    log(RED + f"Early failure detected: Temperature rising too quickly ({temp_trend}°C in 60s)" + RESET)
                     return None, None, None, False, None, "EARLY_FAILURE_TEMP_RISING"
 
         # Calculate percentage progress
@@ -332,7 +368,7 @@ def benchmark_iteration(core_voltage, frequency):
         )
         if vr_temp is not None and vr_temp > 0:
             status_line += f" | VR: {int(vr_temp):2d}°C"
-        print(status_line + RESET)
+        log(status_line + RESET)
 
         # Only sleep if it's not the last iteration
         if sample < total_samples - 1:
@@ -362,51 +398,90 @@ def benchmark_iteration(core_voltage, frequency):
         if average_hashrate > 0:
             efficiency_jth = average_power / (average_hashrate / 1_000)
         else:
-            print(RED + "Warning: Zero hashrate detected, skipping efficiency calculation" + RESET)
+            log(RED + "Warning: Zero hashrate detected, skipping efficiency calculation" + RESET)
             return None, None, None, False, None, "ZERO_HASHRATE"
         
         # Calculate if hashrate is within 10% of expected
         hashrate_within_tolerance = (average_hashrate >= expected_hashrate * 0.90)
         
-        print(GREEN + f"Average Hashrate: {average_hashrate:.2f} GH/s (Expected: {expected_hashrate:.2f} GH/s)" + RESET)
-        print(GREEN + f"Average Temperature: {average_temperature:.2f}°C" + RESET)
+        log(GREEN + f"Average Hashrate: {average_hashrate:.2f} GH/s (Expected: {expected_hashrate:.2f} GH/s)" + RESET)
+        log(GREEN + f"Average Temperature: {average_temperature:.2f}°C" + RESET)
         if average_vr_temp is not None:
-            print(GREEN + f"Average VR Temperature: {average_vr_temp:.2f}°C" + RESET)
-        print(GREEN + f"Efficiency: {efficiency_jth:.2f} J/TH" + RESET)
+            log(GREEN + f"Average VR Temperature: {average_vr_temp:.2f}°C" + RESET)
+        log(GREEN + f"Efficiency: {efficiency_jth:.2f} J/TH" + RESET)
         
         return average_hashrate, average_temperature, efficiency_jth, hashrate_within_tolerance, average_vr_temp, None
     else:
-        print(YELLOW + "No Hashrate or Temperature or Watts data collected." + RESET)
+        log(YELLOW + "No Hashrate or Temperature or Watts data collected." + RESET)
         return None, None, None, False, None, "NO_DATA_COLLECTED"
+
+def generate_results_json(results_data):
+    if not results_data:
+        return {"all_results": [], "top_performers": [], "most_efficient": []}
+
+    # Sort results by averageHashRate in descending order and get the top 5
+    top_5_results = sorted(results_data, key=lambda x: x["averageHashRate"], reverse=True)[:5]
+    top_5_efficient_results = sorted(results_data, key=lambda x: x["efficiencyJTH"], reverse=False)[:5]
+    
+    # Create a dictionary containing all results and top performers
+    final_data = {
+        "all_results": results_data,
+        "top_performers": [
+            {
+                "rank": i,
+                "coreVoltage": result["coreVoltage"],
+                "frequency": result["frequency"],
+                "averageHashRate": result["averageHashRate"],
+                "averageTemperature": result["averageTemperature"],
+                "efficiencyJTH": result["efficiencyJTH"],
+                **({"averageVRTemp": result["averageVRTemp"]} if "averageVRTemp" in result else {})
+            }
+            for i, result in enumerate(top_5_results, 1)
+        ],
+        "most_efficient": [
+            {
+                "rank": i,
+                "coreVoltage": result["coreVoltage"],
+                "frequency": result["frequency"],
+                "averageHashRate": result["averageHashRate"],
+                "averageTemperature": result["averageTemperature"],
+                "efficiencyJTH": result["efficiencyJTH"],
+                **({"averageVRTemp": result["averageVRTemp"]} if "averageVRTemp" in result else {})
+            }
+            for i, result in enumerate(top_5_efficient_results, 1)
+        ]
+    }
+    return final_data
 
 def save_results():
     try:
         # Extract IP from nerdqaxeplusplus_ip global variable and remove 'http://'
         ip_address = nerdqaxeplusplus_ip.replace('http://', '')
         filename = f"nerdqaxeplusplus_benchmark_results_{ip_address}_{START_TIME}.json"
+        
+        data_to_save = generate_results_json(results)
+        
         with open(filename, "w") as f:
-            json.dump(results, f, indent=4)
-        print(GREEN + f"Results saved to {filename}" + RESET)
-        print()  # Add empty line
+            json.dump(data_to_save, f, indent=4)
+        log(GREEN + f"Results saved to {filename}" + RESET)
+        log()  # Add empty line
 
     except IOError as e:
-        print(RED + f"Error saving results to file: {e}" + RESET)
+        log(RED + f"Error saving results to file: {e}" + RESET)
 
 def reset_to_best_setting():
     if not results:
-        print(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
+        log(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
         set_system_settings(default_voltage, default_frequency)
     else:
         best_result = sorted(results, key=lambda x: x["averageHashRate"], reverse=True)[0]
         best_voltage = best_result["coreVoltage"]
         best_frequency = best_result["frequency"]
 
-        print(GREEN + f"Applying the best settings from benchmarking:\n"
+        log(GREEN + f"Applying the best settings from benchmarking:\n"
                       f"  Core Voltage: {best_voltage}mV\n"
                       f"  Frequency: {best_frequency}MHz" + RESET)
         set_system_settings(best_voltage, best_frequency)
-    
-    restart_system()
 
 # Main benchmarking process
 try:
@@ -414,12 +489,12 @@ try:
     
     # Add disclaimer
     # Add disclaimer
-    print(RED + "\nDISCLAIMER:" + RESET)
-    print("This tool will stress test your NerdQAxe++ by running it at various voltages and frequencies.")
-    print("While safeguards are in place, running hardware outside of standard parameters carries inherent risks.")
-    print("Use this tool at your own risk. The author(s) are not responsible for any damage to your hardware.")
-    print("\nNOTE: Ambient temperature significantly affects these results. The optimal settings found may not")
-    print("work well if room temperature changes substantially. Re-run the benchmark if conditions change.\n")
+    log(RED + "DISCLAIMER:" + RESET)
+    log("This tool will stress test your NerdQAxe++ by running it at various voltages and frequencies.")
+    log("While safeguards are in place, running hardware outside of standard parameters carries inherent risks.")
+    log("Use this tool at your own risk. The author(s) are not responsible for any damage to your hardware.")
+    log("NOTE: Ambient temperature significantly affects these results. The optimal settings found may not")
+    log("work well if room temperature changes substantially. Re-run the benchmark if conditions change.\n")
     
     current_voltage = initial_voltage
     current_frequency = initial_frequency
@@ -437,7 +512,7 @@ try:
 
         # Skip if we've already tested this combination
         if combination_key in tested_combinations:
-            print(YELLOW + f"Skipping already tested combination: Voltage={current_voltage}mV, Frequency={current_frequency}MHz" + RESET)
+            log(YELLOW + f"Skipping already tested combination: Voltage={current_voltage}mV, Frequency={current_frequency}MHz" + RESET)
             # Move to next combination
             if current_frequency + frequency_increment <= max_allowed_frequency:
                 current_frequency += frequency_increment
@@ -456,11 +531,11 @@ try:
 
         # Validate values before applying (belt and suspenders approach)
         if current_voltage > max_allowed_voltage or current_frequency > max_allowed_frequency:
-            print(RED + f"SAFETY CHECK: Attempted to test unsafe values (V={current_voltage}mV, F={current_frequency}MHz). Stopping." + RESET)
+            log(RED + f"SAFETY CHECK: Attempted to test unsafe values (V={current_voltage}mV, F={current_frequency}MHz). Stopping." + RESET)
             break
 
         if current_voltage < min_allowed_voltage or current_frequency < min_allowed_frequency:
-            print(RED + f"SAFETY CHECK: Values below minimum (V={current_voltage}mV, F={current_frequency}MHz). Stopping." + RESET)
+            log(RED + f"SAFETY CHECK: Values below minimum (V={current_voltage}mV, F={current_frequency}MHz). Stopping." + RESET)
             break
 
         set_system_settings(current_voltage, current_frequency)
@@ -482,23 +557,23 @@ try:
             results.append(result)
 
             # Display current best results after each test (incremental results display)
-            print(CYAN + "\n" + "="*70 + RESET)
-            print(CYAN + "CURRENT BEST RESULTS:" + RESET)
+            log(CYAN + "\n" + "="*70 + RESET)
+            log(CYAN + "CURRENT BEST RESULTS:" + RESET)
 
             # Find current best hashrate
             best_hashrate_result = max(results, key=lambda x: x["averageHashRate"])
-            print(GREEN + f"  Best Hashrate: {best_hashrate_result['averageHashRate']:.2f} GH/s" + RESET)
-            print(f"    └─ Voltage: {best_hashrate_result['coreVoltage']}mV, Frequency: {best_hashrate_result['frequency']}MHz")
-            print(f"    └─ Temp: {best_hashrate_result['averageTemperature']:.1f}°C, Efficiency: {best_hashrate_result['efficiencyJTH']:.2f} J/TH")
+            log(GREEN + f"  Best Hashrate: {best_hashrate_result['averageHashRate']:.2f} GH/s" + RESET)
+            log(f"    └─ Voltage: {best_hashrate_result['coreVoltage']}mV, Frequency: {best_hashrate_result['frequency']}MHz")
+            log(f"    └─ Temp: {best_hashrate_result['averageTemperature']:.1f}°C, Efficiency: {best_hashrate_result['efficiencyJTH']:.2f} J/TH")
 
             # Find current best efficiency
             best_efficiency_result = min(results, key=lambda x: x["efficiencyJTH"])
-            print(GREEN + f"  Best Efficiency: {best_efficiency_result['efficiencyJTH']:.2f} J/TH" + RESET)
-            print(f"    └─ Voltage: {best_efficiency_result['coreVoltage']}mV, Frequency: {best_efficiency_result['frequency']}MHz")
-            print(f"    └─ Hashrate: {best_efficiency_result['averageHashRate']:.2f} GH/s, Temp: {best_efficiency_result['averageTemperature']:.1f}°C")
+            log(GREEN + f"  Best Efficiency: {best_efficiency_result['efficiencyJTH']:.2f} J/TH" + RESET)
+            log(f"    └─ Voltage: {best_efficiency_result['coreVoltage']}mV, Frequency: {best_efficiency_result['frequency']}MHz")
+            log(f"    └─ Hashrate: {best_efficiency_result['averageHashRate']:.2f} GH/s, Temp: {best_efficiency_result['averageTemperature']:.1f}°C")
 
-            print(CYAN + f"  Total configurations tested: {len(results)}" + RESET)
-            print(CYAN + "="*70 + "\n" + RESET)
+            log(CYAN + f"  Total configurations tested: {len(results)}" + RESET)
+            log(CYAN + "="*70 + "\n" + RESET)
 
             if hashrate_ok:
                 # If hashrate is good, try increasing frequency
@@ -512,38 +587,55 @@ try:
                         # Reset frequency to initial to explore higher voltage with all frequencies
                         current_frequency = initial_frequency
                         max_frequency_reached = False  # Reset since we're exploring new voltage
-                        print(YELLOW + f"Max frequency reached. Increasing voltage to {current_voltage}mV and resetting frequency to {current_frequency}MHz" + RESET)
+                        log(YELLOW + f"Max frequency reached. Increasing voltage to {current_voltage}mV and resetting frequency to {current_frequency}MHz" + RESET)
                     else:
                         max_voltage_reached = True
-                        print(GREEN + f"Reached maximum voltage ({max_allowed_voltage}mV) and frequency ({max_allowed_frequency}MHz) with good results." + RESET)
+                        log(GREEN + f"Reached maximum voltage ({max_allowed_voltage}mV) and frequency ({max_allowed_frequency}MHz) with good results." + RESET)
             else:
                 # If hashrate is not good, increase voltage and retry same frequency
                 if current_voltage + voltage_increment <= max_allowed_voltage:
                     current_voltage += voltage_increment
-                    print(YELLOW + f"Hashrate too low compared to expected. Increasing voltage to {current_voltage}mV and retrying frequency {current_frequency}MHz" + RESET)
+                    log(YELLOW + f"Hashrate too low compared to expected. Increasing voltage to {current_voltage}mV and retrying frequency {current_frequency}MHz" + RESET)
                 else:
                     max_voltage_reached = True
                     # If we can't increase voltage, try next frequency if available
                     if current_frequency + frequency_increment <= max_allowed_frequency:
                         current_frequency += frequency_increment
-                        print(YELLOW + f"Max voltage reached. Moving to next frequency: {current_frequency}MHz" + RESET)
+                        log(YELLOW + f"Max voltage reached. Moving to next frequency: {current_frequency}MHz" + RESET)
                     else:
                         max_frequency_reached = True
-                        print(YELLOW + f"Reached maximum voltage ({max_allowed_voltage}mV) and frequency ({max_allowed_frequency}MHz) but hashrate is below expected." + RESET)
+                        log(YELLOW + f"Reached maximum voltage ({max_allowed_voltage}mV) and frequency ({max_allowed_frequency}MHz) but hashrate is below expected." + RESET)
         else:
-            # If we hit thermal limits or other issues, we've found the highest safe settings
-            print(GREEN + f"Reached thermal or stability limits at V={current_voltage}mV, F={current_frequency}MHz. Stopping further testing." + RESET)
-            break  # Stop testing higher values
+            # Handle early failures gracefully
+            if error_reason == "EARLY_FAILURE_LOW_HASHRATE":
+                log(YELLOW + f"Early failure detected (unstable). Attempting to stabilize..." + RESET)
+                # Treat this exactly like "hashrate not good" - try increasing voltage
+                if current_voltage + voltage_increment <= max_allowed_voltage:
+                    current_voltage += voltage_increment
+                    log(YELLOW + f"Increasing voltage to {current_voltage}mV and retrying frequency {current_frequency}MHz" + RESET)
+                else:
+                    max_voltage_reached = True
+                    # If we can't increase voltage, try next frequency if available
+                    if current_frequency + frequency_increment <= max_allowed_frequency:
+                        current_frequency += frequency_increment
+                        log(YELLOW + f"Max voltage reached. Moving to next frequency: {current_frequency}MHz" + RESET)
+                    else:
+                        max_frequency_reached = True
+                        log(YELLOW + f"Reached maximum voltage ({max_allowed_voltage}mV) and frequency ({max_allowed_frequency}MHz) but system is unstable." + RESET)
+            else:
+                # If we hit thermal limits or other safety issues, stop
+                log(GREEN + f"Reached thermal or stability limits ({error_reason}) at V={current_voltage}mV, F={current_frequency}MHz. Stopping further testing." + RESET)
+                break  # Stop testing higher values
 
         save_results()
 
 except Exception as e:
-    print(RED + f"An unexpected error occurred: {e}" + RESET)
+    log(RED + f"An unexpected error occurred: {e}" + RESET)
     if results:
         reset_to_best_setting()
         save_results()
     else:
-        print(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
+        log(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
         set_system_settings(default_voltage, default_frequency)
         restart_system()
 finally:
@@ -551,79 +643,48 @@ finally:
         if results:
             reset_to_best_setting()
             save_results()
-            print(GREEN + "NerdQAxe++ reset to best or default settings and results saved." + RESET)
+            log(GREEN + "NerdQAxe++ reset to best or default settings and results saved." + RESET)
         else:
-            print(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
+            log(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
             set_system_settings(default_voltage, default_frequency)
             restart_system()
         system_reset_done = True
 
     # Print results summary only if we have results
     if results:
+        # Save the final data to JSON using the common function
+        save_results()
+        
+        log(GREEN + "Benchmarking completed." + RESET)
+        
         # Sort results by averageHashRate in descending order and get the top 5
         top_5_results = sorted(results, key=lambda x: x["averageHashRate"], reverse=True)[:5]
         top_5_efficient_results = sorted(results, key=lambda x: x["efficiencyJTH"], reverse=False)[:5]
-        
-        # Create a dictionary containing all results and top performers
-        final_data = {
-            "all_results": results,
-            "top_performers": [
-                {
-                    "rank": i,
-                    "coreVoltage": result["coreVoltage"],
-                    "frequency": result["frequency"],
-                    "averageHashRate": result["averageHashRate"],
-                    "averageTemperature": result["averageTemperature"],
-                    "efficiencyJTH": result["efficiencyJTH"],
-                    **({"averageVRTemp": result["averageVRTemp"]} if "averageVRTemp" in result else {})
-                }
-                for i, result in enumerate(top_5_results, 1)
-            ],
-            "most_efficient": [
-                {
-                    "rank": i,
-                    "coreVoltage": result["coreVoltage"],
-                    "frequency": result["frequency"],
-                    "averageHashRate": result["averageHashRate"],
-                    "averageTemperature": result["averageTemperature"],
-                    "efficiencyJTH": result["efficiencyJTH"],
-                    **({"averageVRTemp": result["averageVRTemp"]} if "averageVRTemp" in result else {})
-                }
-                for i, result in enumerate(top_5_efficient_results, 1)
-            ]
-        }
-        
-        # Save the final data to JSON
-        ip_address = nerdqaxeplusplus_ip.replace('http://', '')
-        filename = f"nerdqaxeplusplus_benchmark_results_{ip_address}_{START_TIME}.json"
-        with open(filename, "w") as f:
-            json.dump(final_data, f, indent=4)
-        
-        print(GREEN + "Benchmarking completed." + RESET)
+
         if top_5_results:
-            print(GREEN + "\nTop 5 Highest Hashrate Settings:" + RESET)
+            log(GREEN + "Top 5 Highest Hashrate Settings:" + RESET)
             for i, result in enumerate(top_5_results, 1):
-                print(GREEN + f"\nRank {i}:" + RESET)
-                print(GREEN + f"  Core Voltage: {result['coreVoltage']}mV" + RESET)
-                print(GREEN + f"  Frequency: {result['frequency']}MHz" + RESET)
-                print(GREEN + f"  Average Hashrate: {result['averageHashRate']:.2f} GH/s" + RESET)
-                print(GREEN + f"  Average Temperature: {result['averageTemperature']:.2f}°C" + RESET)
-                print(GREEN + f"  Efficiency: {result['efficiencyJTH']:.2f} J/TH" + RESET)
+                log(GREEN + f"Rank {i}:" + RESET)
+                log(GREEN + f"  Core Voltage: {result['coreVoltage']}mV" + RESET)
+                log(GREEN + f"  Frequency: {result['frequency']}MHz" + RESET)
+                log(GREEN + f"  Average Hashrate: {result['averageHashRate']:.2f} GH/s" + RESET)
+                log(GREEN + f"  Average Temperature: {result['averageTemperature']:.2f}°C" + RESET)
+                log(GREEN + f"  Efficiency: {result['efficiencyJTH']:.2f} J/TH" + RESET)
                 if "averageVRTemp" in result:
-                    print(GREEN + f"  Average VR Temperature: {result['averageVRTemp']:.2f}°C" + RESET)
+                    log(GREEN + f"  Average VR Temperature: {result['averageVRTemp']:.2f}°C" + RESET)
             
-            print(GREEN + "\nTop 5 Most Efficient Settings:" + RESET)
+            log(GREEN + "Top 5 Most Efficient Settings:" + RESET)
             for i, result in enumerate(top_5_efficient_results, 1):
-                print(GREEN + f"\nRank {i}:" + RESET)
-                print(GREEN + f"  Core Voltage: {result['coreVoltage']}mV" + RESET)
-                print(GREEN + f"  Frequency: {result['frequency']}MHz" + RESET)
-                print(GREEN + f"  Average Hashrate: {result['averageHashRate']:.2f} GH/s" + RESET)
-                print(GREEN + f"  Average Temperature: {result['averageTemperature']:.2f}°C" + RESET)
-                print(GREEN + f"  Efficiency: {result['efficiencyJTH']:.2f} J/TH" + RESET)
+                log(GREEN + f"Rank {i}:" + RESET)
+                log(GREEN + f"  Core Voltage: {result['coreVoltage']}mV" + RESET)
+                log(GREEN + f"  Frequency: {result['frequency']}MHz" + RESET)
+                log(GREEN + f"  Average Hashrate: {result['averageHashRate']:.2f} GH/s" + RESET)
+                log(GREEN + f"  Average Temperature: {result['averageTemperature']:.2f}°C" + RESET)
+                log(GREEN + f"  Efficiency: {result['efficiencyJTH']:.2f} J/TH" + RESET)
                 if "averageVRTemp" in result:
-                    print(GREEN + f"  Average VR Temperature: {result['averageVRTemp']:.2f}°C" + RESET)
+                    log(GREEN + f"  Average VR Temperature: {result['averageVRTemp']:.2f}°C" + RESET)
         else:
-            print(RED + "No valid results were found during benchmarking." + RESET)
+            log(RED + "No valid results were found during benchmarking." + RESET)
 
 # Add this new function to handle cleanup
 def cleanup_and_exit(reason=None):
@@ -635,13 +696,13 @@ def cleanup_and_exit(reason=None):
         if results:
             reset_to_best_setting()
             save_results()
-            print(GREEN + "NerdQAxe++ reset to best settings and results saved." + RESET)
+            log(GREEN + "NerdQAxe++ reset to best settings and results saved." + RESET)
         else:
-            print(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
+            log(YELLOW + "No valid benchmarking results found. Applying predefined default settings." + RESET)
             set_system_settings(default_voltage, default_frequency)
     finally:
         system_reset_done = True
         if reason:
-            print(RED + f"Benchmarking stopped: {reason}" + RESET)
-        print(GREEN + "Benchmarking completed." + RESET)
+            log(RED + f"Benchmarking stopped: {reason}" + RESET)
+        log(GREEN + "Benchmarking completed." + RESET)
         sys.exit(0)
